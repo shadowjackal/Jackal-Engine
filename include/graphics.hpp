@@ -10,12 +10,23 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
+#include <functional>
+#include <map>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#include<assimp/quaternion.h>
+#include<assimp/vector3.h>
+#include<assimp/matrix4x4.h>
+
+#include "stb_image.h"
 
 extern int LastThingDrawn;
 
@@ -517,96 +528,30 @@ class StaticMesh {
 };
 
 
-#define MAX_BONE_INFLUENCE 4
+class AssimpGLMHelpers
+{
+public:
 
-struct AnimVertex {
-    // position
-    glm::vec3 Position;
-    // normal
-    glm::vec3 Normal;
-    // texCoords
-    glm::vec2 TexCoords;
-    // tangent
-    glm::vec3 Tangent;
-    // bitangent
-    glm::vec3 Bitangent;
-	//bone indexes which will influence this vertex
-	int m_BoneIDs[MAX_BONE_INFLUENCE];
-	//weights from each bone
-	float m_Weights[MAX_BONE_INFLUENCE];
-};
+	static inline glm::mat4 ConvertMatrixToGLMFormat(const aiMatrix4x4& from)
+	{
+		glm::mat4 to;
+		//the a,b,c,d in assimp is the row ; the 1,2,3,4 is the column
+		to[0][0] = from.a1; to[1][0] = from.a2; to[2][0] = from.a3; to[3][0] = from.a4;
+		to[0][1] = from.b1; to[1][1] = from.b2; to[2][1] = from.b3; to[3][1] = from.b4;
+		to[0][2] = from.c1; to[1][2] = from.c2; to[2][2] = from.c3; to[3][2] = from.c4;
+		to[0][3] = from.d1; to[1][3] = from.d2; to[2][3] = from.d3; to[3][3] = from.d4;
+		return to;
+	}
 
-class Mesh {
-    public :
-    std::vector<AnimVertex>       vertices;
-    std::vector<unsigned int> indices;
-    unsigned int VAO;
+	static inline glm::vec3 GetGLMVec(const aiVector3D& vec) 
+	{ 
+		return glm::vec3(vec.x, vec.y, vec.z); 
+	}
 
-
-    // constructor
-    Mesh(std::vector<AnimVertex> vertices, std::vector<unsigned int> indices)
-    {
-        this->vertices = vertices;
-        this->indices = indices;
-
-        // now that we have all the required data, set the vertex buffers and its attribute pointers.
-        setupMesh();
-    }
-
-    void Draw(Shader &shader) {
-            glBindVertexArray(this->VAO);
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, glm::vec3(0.f,0.f,0.f));
-            shader.setMat4("model", model);
-        glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, static_cast<unsigned int>(indices.size()), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0); 
-        }
-
-
-    private :
-    unsigned int VBO, EBO;
-
-    // initializes all the buffer objects/arrays
-    void setupMesh()
-    {
-        // create buffers/arrays
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-        glGenBuffers(1, &EBO);
-
-        glBindVertexArray(VAO);
-        // load data into vertex buffers
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        // A great thing about structs is that their memory layout is sequential for all its items.
-        // The effect is that we can simply pass a pointer to the struct and it translates perfectly to a glm::vec3/2 array which
-        // again translates to 3/2 floats which translates to a byte array.
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(AnimVertex), &vertices[0], GL_STATIC_DRAW);  
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
-
-        // set the vertex attribute pointers
-        // vertex Positions
-        glEnableVertexAttribArray(0);	
-            // position attribute
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 22 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 22 * sizeof(float), (void*)(3 * sizeof(float)));
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 22 * sizeof(float), (void*)(6 * sizeof(float)));
-            glEnableVertexAttribArray(2);
-            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 22 * sizeof(float), (void*)(9 * sizeof(float)));
-            glEnableVertexAttribArray(3);
-            glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, 22 * sizeof(float), (void*)(12 * sizeof(float)));
-            glEnableVertexAttribArray(4);
-            glVertexAttribPointer(5, 4, GL_INT, GL_FALSE, 22 * sizeof(float), (void*)(15 * sizeof(float)));
-            glEnableVertexAttribArray(5);
-            glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 22 * sizeof(float), (void*)(18 * sizeof(float)));
-            glEnableVertexAttribArray(6);
- 
-        glBindVertexArray(0);
-    }
+	static inline glm::quat GetGLMQuat(const aiQuaternion& pOrientation)
+	{
+		return glm::quat(pOrientation.w, pOrientation.x, pOrientation.y, pOrientation.z);
+	}
 };
 
 
@@ -628,224 +573,301 @@ struct KeyScale
 	float timeStamp;
 };
 
-struct AnimNodeFile {
-	glm::mat4 transformation;
-	int BoneID;
-	int childrenCount;
-	std::vector<int> children;
-}; 
+struct BoneInfo
+{
+	/*id is index in finalBoneMatrices*/
+	int id;
 
-class Bone {
-    public :
-    Bone() {};
-    
-    Bone(int boneiid, std::vector<KeyPosition> keyPos, std::vector<KeyRotation> keyRot, std::vector<KeyScale> keyScal, glm::mat4 offedSet) {
-        this->BoneID = boneiid;
-        this->KeyFramePos = keyPos;
-        this->KeyFrameRot = keyRot;
-        this->KeyFrameScal = keyScal;
-        this->OoFset = offedSet;
-    };
-
-    int BoneID;
-    glm::mat4 LocalTrans;
-    std::vector<KeyPosition> KeyFramePos;
-    std::vector<KeyRotation> KeyFrameRot;
-    std::vector<KeyScale> KeyFrameScal;
-    glm::mat4 OoFset;
-    /* Gets the current index on mKeyPositions to interpolate to based on 
-    the current animation time*/
-    int GetPositionIndex(float animationTime)
-    {
-        for (int index = 0; index < KeyFramePos.size() - 1; ++index)
-        {
-            if (animationTime < KeyFramePos[index + 1].timeStamp)
-                return index;
-        }
-        assert(0);
-    }
-
-    /* Gets the current index on mKeyRotations to interpolate to based on the 
-    current animation time*/
-    int GetRotationIndex(float animationTime)
-    {
-        for (int index = 0; index < KeyFrameRot.size() - 1; ++index)
-        {
-            if (animationTime < KeyFrameRot[index + 1].timeStamp)
-                return index;
-        }
-        assert(0);
-    }
-
-    /* Gets the current index on mKeyScalings to interpolate to based on the 
-    current animation time */
-    int GetScaleIndex(float animationTime)
-    {
-        for (int index = 0; index < KeyFrameScal.size() - 1; ++index)
-        {
-            if (animationTime < KeyFrameScal[index + 1].timeStamp)
-                return index;
-        }
-        assert(0);
-    }
-
-
-    /* Gets normalized value for Lerp & Slerp*/
-    float GetScaleFactor(float lastTimeStamp, float nextTimeStamp, float animationTime)
-    {
-        float scaleFactor = 0.0f;
-        float midWayLength = animationTime - lastTimeStamp;
-        float framesDiff = nextTimeStamp - lastTimeStamp;
-        scaleFactor = midWayLength / framesDiff;
-        return scaleFactor;
-    }
-
-    /*figures out which position keys to interpolate b/w and performs the interpolation 
-    and returns the translation matrix*/
-    glm::mat4 InterpolatePosition(float animationTime)
-    {
-        if (1 == KeyFramePos.size())
-            return glm::translate(glm::mat4(1.0f), KeyFramePos[0].position);
-
-        int p0Index = GetPositionIndex(animationTime);
-        int p1Index = p0Index + 1;
-        float scaleFactor = GetScaleFactor(KeyFramePos[p0Index].timeStamp,
-            KeyFramePos[p1Index].timeStamp, animationTime);
-        glm::vec3 finalPosition = glm::mix(KeyFramePos[p0Index].position,
-            KeyFramePos[p1Index].position, scaleFactor);
-        return glm::translate(glm::mat4(1.0f), finalPosition);
-    }
-
-    /*figures out which rotations keys to interpolate b/w and performs the interpolation 
-    and returns the rotation matrix*/
-    glm::mat4 InterpolateRotation(float animationTime)
-    {
-        if (1 == KeyFrameRot.size())
-        {
-            auto rotation = glm::normalize(KeyFrameRot[0].orientation);
-            return glm::toMat4(rotation);
-        }
-
-        int p0Index = GetRotationIndex(animationTime);
-        int p1Index = p0Index + 1;
-        float scaleFactor = GetScaleFactor(KeyFrameRot[p0Index].timeStamp,
-            KeyFrameRot[p1Index].timeStamp, animationTime);
-        glm::quat finalRotation = glm::slerp(KeyFrameRot[p0Index].orientation,
-            KeyFrameRot[p1Index].orientation, scaleFactor);
-        finalRotation = glm::normalize(finalRotation);
-        return glm::toMat4(finalRotation);
-    }
-
-    /*figures out which scaling keys to interpolate b/w and performs the interpolation 
-    and returns the scale matrix*/
-    glm::mat4 InterpolateScaling(float animationTime)
-    {
-        if (1 == KeyFrameScal.size())
-            return glm::scale(glm::mat4(1.0f), KeyFrameScal[0].scale);
-
-        int p0Index = GetScaleIndex(animationTime);
-        int p1Index = p0Index + 1;
-        float scaleFactor = GetScaleFactor(KeyFrameScal[p0Index].timeStamp,
-            KeyFrameScal[p1Index].timeStamp, animationTime);
-        glm::vec3 finalScale = glm::mix(KeyFrameScal[p0Index].scale, KeyFrameScal[p1Index].scale
-            , scaleFactor);
-        return glm::scale(glm::mat4(1.0f), finalScale);
-    };
-	
-    /*interpolates  b/w positions,rotations & scaling keys based on the curren time of 
-    the animation and prepares the local transformation matrix by combining all keys 
-    tranformations*/
-    void Update(float animationTime)
-    {
-        glm::mat4 translation = InterpolatePosition(animationTime);
-        glm::mat4 rotation = InterpolateRotation(animationTime);
-        glm::mat4 scale = InterpolateScaling(animationTime);
-        LocalTrans = translation * rotation * scale;
-    };
-
+	/*offset matrix transforms vertex from model space to bone space*/
+	glm::mat4 offset;
 
 };
 
-class Animation {
-    public :
-    float frameloc;
-    float Duration;
-    float CurrentTime;
-    int TPS;
-    float Delta;
-    std::vector<AnimNodeFile> hierarch;
-    std::vector<Bone> bones;
-    std::vector<glm::mat4> FinalTrans;
 
-    Animation() {
+class Bone
+{
+public:
+	Bone(const std::string& name, int ID, const aiNodeAnim* channel)
+		:
+		m_Name(name),
+		m_ID(ID),
+		m_LocalTransform(1.0f)
+	{
+		m_NumPositions = channel->mNumPositionKeys;
+
+		for (int positionIndex = 0; positionIndex < m_NumPositions; ++positionIndex)
+		{
+			aiVector3D aiPosition = channel->mPositionKeys[positionIndex].mValue;
+			float timeStamp = channel->mPositionKeys[positionIndex].mTime;
+			KeyPosition data;
+			data.position = AssimpGLMHelpers::GetGLMVec(aiPosition);
+			data.timeStamp = timeStamp;
+			m_Positions.push_back(data);
+		}
+
+		m_NumRotations = channel->mNumRotationKeys;
+		for (int rotationIndex = 0; rotationIndex < m_NumRotations; ++rotationIndex)
+		{
+			aiQuaternion aiOrientation = channel->mRotationKeys[rotationIndex].mValue;
+			float timeStamp = channel->mRotationKeys[rotationIndex].mTime;
+			KeyRotation data;
+			data.orientation = AssimpGLMHelpers::GetGLMQuat(aiOrientation);
+			data.timeStamp = timeStamp;
+			m_Rotations.push_back(data);
+		}
+
+		m_NumScalings = channel->mNumScalingKeys;
+		for (int keyIndex = 0; keyIndex < m_NumScalings; ++keyIndex)
+		{
+			aiVector3D scale = channel->mScalingKeys[keyIndex].mValue;
+			float timeStamp = channel->mScalingKeys[keyIndex].mTime;
+			KeyScale data;
+			data.scale = AssimpGLMHelpers::GetGLMVec(scale);
+			data.timeStamp = timeStamp;
+			m_Scales.push_back(data);
+		}
+	}
+	
+	void Update(float animationTime)
+	{
+		glm::mat4 translation = InterpolatePosition(animationTime);
+		glm::mat4 rotation = InterpolateRotation(animationTime);
+		glm::mat4 scale = InterpolateScaling(animationTime);
+		m_LocalTransform = translation * rotation * scale;
+	}
+	glm::mat4 GetLocalTransform() { return m_LocalTransform; }
+	std::string GetBoneName() const { return m_Name; }
+	int GetBoneID() { return m_ID; }
+	
+
+
+	int GetPositionIndex(float animationTime)
+	{
+		for (int index = 0; index < m_NumPositions - 1; ++index)
+		{
+			if (animationTime < m_Positions[index + 1].timeStamp)
+				return index;
+		}
+		assert(0);
+	}
+
+	int GetRotationIndex(float animationTime)
+	{
+		for (int index = 0; index < m_NumRotations - 1; ++index)
+		{
+			if (animationTime < m_Rotations[index + 1].timeStamp)
+				return index;
+		}
+		assert(0);
+	}
+
+	int GetScaleIndex(float animationTime)
+	{
+		for (int index = 0; index < m_NumScalings - 1; ++index)
+		{
+			if (animationTime < m_Scales[index + 1].timeStamp)
+				return index;
+		}
+		assert(0);
+	}
+
+
+private:
+
+	float GetScaleFactor(float lastTimeStamp, float nextTimeStamp, float animationTime)
+	{
+		float scaleFactor = 0.0f;
+		float midWayLength = animationTime - lastTimeStamp;
+		float framesDiff = nextTimeStamp - lastTimeStamp;
+		scaleFactor = midWayLength / framesDiff;
+		return scaleFactor;
+	}
+
+	glm::mat4 InterpolatePosition(float animationTime)
+	{
+		if (1 == m_NumPositions)
+			return glm::translate(glm::mat4(1.0f), m_Positions[0].position);
+
+		int p0Index = GetPositionIndex(animationTime);
+		int p1Index = p0Index + 1;
+		float scaleFactor = GetScaleFactor(m_Positions[p0Index].timeStamp,
+			m_Positions[p1Index].timeStamp, animationTime);
+		glm::vec3 finalPosition = glm::mix(m_Positions[p0Index].position, m_Positions[p1Index].position
+			, scaleFactor);
+		return glm::translate(glm::mat4(1.0f), finalPosition);
+	}
+
+	glm::mat4 InterpolateRotation(float animationTime)
+	{
+		if (1 == m_NumRotations)
+		{
+			auto rotation = glm::normalize(m_Rotations[0].orientation);
+			return glm::toMat4(rotation);
+		}
+
+		int p0Index = GetRotationIndex(animationTime);
+		int p1Index = p0Index + 1;
+		float scaleFactor = GetScaleFactor(m_Rotations[p0Index].timeStamp,
+			m_Rotations[p1Index].timeStamp, animationTime);
+		glm::quat finalRotation = glm::slerp(m_Rotations[p0Index].orientation, m_Rotations[p1Index].orientation
+			, scaleFactor);
+		finalRotation = glm::normalize(finalRotation);
+		return glm::toMat4(finalRotation);
+
+	}
+
+	glm::mat4 InterpolateScaling(float animationTime)
+	{
+		if (1 == m_NumScalings)
+			return glm::scale(glm::mat4(1.0f), m_Scales[0].scale);
+
+		int p0Index = GetScaleIndex(animationTime);
+		int p1Index = p0Index + 1;
+		float scaleFactor = GetScaleFactor(m_Scales[p0Index].timeStamp,
+			m_Scales[p1Index].timeStamp, animationTime);
+		glm::vec3 finalScale = glm::mix(m_Scales[p0Index].scale, m_Scales[p1Index].scale
+			, scaleFactor);
+		return glm::scale(glm::mat4(1.0f), finalScale);
+	}
+
+	std::vector<KeyPosition> m_Positions;
+	std::vector<KeyRotation> m_Rotations;
+	std::vector<KeyScale> m_Scales;
+	int m_NumPositions;
+	int m_NumRotations;
+	int m_NumScalings;
+
+	glm::mat4 m_LocalTransform;
+	std::string m_Name;
+	int m_ID;
+};
+
+
+
+#define MAX_BONE_INFLUENCE 4
+
+struct Vertex {
+    // position
+    glm::vec3 Position;
+    // normal
+    glm::vec3 Normal;
+    // texCoords
+    glm::vec2 TexCoords;
+    // tangent
+    glm::vec3 Tangent;
+    // bitangent
+    glm::vec3 Bitangent;
+	//bone indexes which will influence this vertex
+	int m_BoneIDs[MAX_BONE_INFLUENCE];
+	//weights from each bone
+	float m_Weights[MAX_BONE_INFLUENCE];
+};
+
+typedef unsigned int Texture;
+
+class Mesh {
+public:
+    // mesh Data
+    std::vector<Vertex>       vertices;
+    std::vector<unsigned int> indices;
+    Texture      textures;
+    unsigned int VAO;
+
+    // constructor
+    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices, Texture textures)
+    {
+        this->vertices = vertices;
+        this->indices = indices;
+        this->textures = textures;
+
+        // now that we have all the required data, set the vertex buffers and its attribute pointers.
+        setupMesh();
+    }
+
+    // render the mesh
+    void Draw(Shader &shader) 
+    {        
+        
+        // draw mesh
+        glBindVertexArray(VAO);
+        glDrawElements(GL_TRIANGLES, static_cast<unsigned int>(indices.size()), GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+
+        // always good practice to set everything back to defaults once configured.
+        glActiveTexture(GL_TEXTURE0);
+    }
+
+private:
+    // render data 
+    unsigned int VBO, EBO;
+
+    // initializes all the buffer objects/arrays
+    void setupMesh()
+    {
+        // create buffers/arrays
+        glGenVertexArrays(1, &VAO);
+        glGenBuffers(1, &VBO);
+        glGenBuffers(1, &EBO);
+
+        glBindVertexArray(VAO);
+        // load data into vertex buffers
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        // A great thing about structs is that their memory layout is sequential for all its items.
+        // The effect is that we can simply pass a pointer to the struct and it translates perfectly to a glm::vec3/2 array which
+        // again translates to 3/2 floats which translates to a byte array.
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), &vertices[0], GL_STATIC_DRAW);  
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+
+        // set the vertex attribute pointers
+        // vertex Positions
+        glEnableVertexAttribArray(0);	
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+        // vertex normals
+        glEnableVertexAttribArray(1);	
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Normal));
+        // vertex texture coords
+        glEnableVertexAttribArray(2);	
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, TexCoords));
+        // vertex tangent
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Tangent));
+        // vertex bitangent
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Bitangent));
+		// ids
+		glEnableVertexAttribArray(5);
+		glVertexAttribIPointer(5, 4, GL_INT, sizeof(Vertex), (void*)offsetof(Vertex, m_BoneIDs));
+
+		// weights
+		glEnableVertexAttribArray(6);
+		glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, m_Weights));
+        glBindVertexArray(0);
+    }
+};
+
+
+class Model 
+{
+public:
+
+    Model(void) {
 
     };
 
-    Animation(float Dura, int Ticks, std::vector<AnimNodeFile> hrar, std::vector<Bone> bonelist) {
-        this->Duration = Dura;
-        this->TPS = Ticks;
-        this->hierarch = hrar;
-        this->bones = bonelist;
-        this->FinalTrans.resize(bonelist.size());
-    }
-
-
-    void PlayAnimation()
-    {
-        CurrentTime = 0.0f;
-    }
-
-        Bone* FindBoneID(int id) {
-            for(int i = 0; i < bones.size(); i++) {
-                if(bones[i].BoneID == id) {
-                    return &bones[i];
-                };
-            };
-        }
-
-    void CalculateBoneTransform(const AnimNodeFile* node, glm::mat4 parentTransform)
-    {
-        int nodeName = node->BoneID;
-        glm::mat4 nodeTransform = node->transformation;
-	    Bone* Bone;
-	
-        if (nodeName != -1)
-        {
-            Bone = FindBoneID(nodeName);
-            Bone->Update(CurrentTime);
-            nodeTransform = Bone->LocalTrans;
-        }
-	
-        glm::mat4 globalTransformation = parentTransform * nodeTransform;
-	
-        if (node->childrenCount > 0 && node->BoneID != -1)
-        {
-            FinalTrans[node->BoneID] = globalTransformation * Bone->OoFset;
-        }
-	
-        for (int i = 0; i < node->childrenCount; i++)
-            CalculateBoneTransform(&hierarch[node->children[i]], globalTransformation);
-    }
-
-void UpdateAnimation(float dt)
-    {
-        Delta = dt;
-        
-        CurrentTime += TPS * dt;
-        CurrentTime = fmod(CurrentTime, Duration);
-        CalculateBoneTransform(&hierarch[0], glm::mat4(1.0f));
-        
-    }
-
-};
-
-class Model {
-    public :
+    // model data 
+    std::vector<Texture> textures_loaded;	// stores all the textures loaded so far, optimization to make sure textures aren't loaded more than once.
     std::vector<Mesh>    meshes;
-    Animation AnimationInternal;
+    std::string directory;
+    bool gammaCorrection;
+	
+	
+	std::map<std::string, BoneInfo> m_BoneInfoMap;
+	int m_BoneCounter = 0;
 
-        // constructor, expects a filepath to a 3D model.
-    Model(std::string const &path) 
+    // constructor, expects a filepath to a 3D model.
+    Model(std::string const &path, bool gamma = false) : gammaCorrection(gamma)
     {
         loadModel(path);
     }
@@ -856,125 +878,372 @@ class Model {
         for(unsigned int i = 0; i < meshes.size(); i++)
             meshes[i].Draw(shader);
     }
+    
+	auto& GetBoneInfoMap() { return m_BoneInfoMap; }
+	int& GetBoneCount() { return m_BoneCounter; }
+	
 
-    private :
 
-    void    loadModel(std::string const &path) {
-        std::ifstream infile(path, std::ios::binary);
-        int MeshCnt, indCnt, vtxCnt;
+    // loads a model with supported ASSIMP extensions from file and stores the resulting meshes in the meshes vector.
+    void loadModel(std::string const &path)
+    {
+        // read file via ASSIMP
+        Assimp::Importer importer;
+        const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace);
+        // check for errors
+       // if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) // if is Not Zero
+       // {
+            std::cout << "ERROR::ASSIMP:: " << importer.GetErrorString() << std::endl;
+       //     return;
+     //   }
+        // retrieve the directory path of the filepath
+        directory = path.substr(0, path.find_last_of('/'));
 
-        infile.read(reinterpret_cast<char*>(&MeshCnt),sizeof(int));
+        // process ASSIMP's root node recursively
+        processNode(scene->mRootNode, scene);
+    }
 
-        for(int i = 0; i < MeshCnt; i++) {
-            
-            std::vector<AnimVertex> vtxtable;
-            std::vector<unsigned int> indtable; 
+    // processes a node in a recursive fashion. Processes each individual mesh located at the node and repeats this process on its children nodes (if any).
+    void processNode(aiNode *node, const aiScene *scene)
+    {
+        // process each mesh located at the current node
+        for(unsigned int i = 0; i < node->mNumMeshes; i++)
+        {
+            // the node object only contains indices to index the actual objects in the scene. 
+            // the scene contains all the data, node is just to keep stuff organized (like relations between nodes).
+            aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
+            meshes.push_back(processMesh(mesh, scene));
+        }
+        // after we've processed all of the meshes (if any) we then recursively process each of the children nodes
+        for(unsigned int i = 0; i < node->mNumChildren; i++)
+        {
+            processNode(node->mChildren[i], scene);
+        }
 
-            infile.read(reinterpret_cast<char*>(&vtxCnt),sizeof(int));
-            infile.read(reinterpret_cast<char*>(&indCnt),sizeof(int));
+    }
 
-            for(int j = 0; j < vtxCnt; j++) {
-                AnimVertex TemptempVtx;
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.Position),sizeof(glm::vec3));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.Normal),sizeof(glm::vec3));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.TexCoords),sizeof(glm::vec2));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.Tangent),sizeof(glm::vec3));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.Bitangent),sizeof(glm::vec3));
+	void SetVertexBoneDataToDefault(Vertex& vertex)
+	{
+		for (int i = 0; i < MAX_BONE_INFLUENCE; i++)
+		{
+			vertex.m_BoneIDs[i] = -1;
+			vertex.m_Weights[i] = 0.0f;
+		}
+	}
 
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_BoneIDs[0]),sizeof(int));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_BoneIDs[1]),sizeof(int));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_BoneIDs[2]),sizeof(int));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_BoneIDs[3]),sizeof(int));
 
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_Weights[0]),sizeof(float));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_Weights[1]),sizeof(float));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_Weights[2]),sizeof(float));
-                infile.read(reinterpret_cast<char*>(&TemptempVtx.m_Weights[3]),sizeof(float));
+	Mesh processMesh(aiMesh* mesh, const aiScene* scene)
+	{
+		std::vector<Vertex> vertices;
+		std::vector<unsigned int> indices;
+		std::vector<Texture> textures;
 
-                vtxtable.push_back(TemptempVtx); 
-            };
+		for (unsigned int i = 0; i < mesh->mNumVertices; i++)
+		{
+			Vertex vertex;
+			SetVertexBoneDataToDefault(vertex);
+			vertex.Position = AssimpGLMHelpers::GetGLMVec(mesh->mVertices[i]);
+			vertex.Normal = AssimpGLMHelpers::GetGLMVec(mesh->mNormals[i]);
+			
+			if (mesh->mTextureCoords[0])
+			{
+				glm::vec2 vec;
+				vec.x = mesh->mTextureCoords[0][i].x;
+				vec.y = mesh->mTextureCoords[0][i].y;
+				vertex.TexCoords = vec;
+			}
+			else
+				vertex.TexCoords = glm::vec2(0.0f, 0.0f);
 
-            for(int j = 0; j < indCnt; j++) {
-                unsigned int temp;
-                infile.read(reinterpret_cast<char*>(&temp),sizeof(unsigned int));
-                indtable.push_back(temp);
-            };
+			vertices.push_back(vertex);
+		}
+		for (unsigned int i = 0; i < mesh->mNumFaces; i++)
+		{
+			aiFace face = mesh->mFaces[i];
+			for (unsigned int j = 0; j < face.mNumIndices; j++)
+				indices.push_back(face.mIndices[j]);
+		}
+		aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
 
-            meshes.push_back(Mesh(vtxtable,indtable));
-        };
-        
-        float AnimDuration;
-        int TpsCount;
-        int BoneCount;
-        int NodeCount;
-        std::vector<Bone> tempBoneList;
-        std::vector<AnimNodeFile> tempNodeList;
+		Texture texture = TextureFromFile(std::string("resources/grid.png"), true);
 
-        infile.read(reinterpret_cast<char*>(&AnimDuration),sizeof(float));
-        infile.read(reinterpret_cast<char*>(&TpsCount),sizeof(int));
-        infile.read(reinterpret_cast<char*>(&BoneCount),sizeof(int));
-        infile.read(reinterpret_cast<char*>(&NodeCount),sizeof(int));
 
-        for(int i = 0; i < BoneCount; i++) {
-            int BoneID;
-            glm::mat4 LocalTrans;
-            int numKeyPos;
-            int numKeyRot;
-            int numKeySca;
-            infile.read(reinterpret_cast<char*>(&BoneID),sizeof(int));
-            infile.read(reinterpret_cast<char*>(&LocalTrans),sizeof(glm::mat4));
-            infile.read(reinterpret_cast<char*>(&numKeyPos),sizeof(int));
-            infile.read(reinterpret_cast<char*>(&numKeyRot),sizeof(int));
-            infile.read(reinterpret_cast<char*>(&numKeySca),sizeof(int));
-            
-            std::vector<KeyPosition> tempPos;
-            std::vector<KeyRotation> tempRot;
-            std::vector<KeyScale> tempScal;
+		ExtractBoneWeightForVertices(vertices,mesh,scene);
 
-            for(int j = 0; j < numKeyPos; j++) {
-                tempPos.push_back({});
-                infile.read(reinterpret_cast<char*>(&tempPos[j].position), sizeof(glm::vec3));
-                infile.read(reinterpret_cast<char*>(&tempPos[j].timeStamp), sizeof(float));
-            };
-                        
-            for(int j = 0; j < numKeyRot; j++) {
-                tempRot.push_back({});
-                infile.read(reinterpret_cast<char*>(&tempRot[j].orientation), sizeof(glm::quat));
-                infile.read(reinterpret_cast<char*>(&tempRot[j].timeStamp), sizeof(float));
-            };        
-            
-            for(int j = 0; j < numKeySca; j++) {
-                tempScal.push_back({});
-                infile.read(reinterpret_cast<char*>(&tempScal[j].scale), sizeof(glm::vec3));
-                infile.read(reinterpret_cast<char*>(&tempScal[j].timeStamp), sizeof(float));
-            };
+		return Mesh(vertices, indices, texture);
+	}
 
-            glm::mat4 tempOffset;
-            infile.read(reinterpret_cast<char*>(&tempOffset),sizeof(glm::mat4));
-            tempBoneList.push_back(Bone(BoneID,tempPos,tempRot,tempScal,tempOffset));
-        };
-        
-        for(int i = 0; i < NodeCount; i++) {
-            int BoneID;
-            glm::mat4 OrientR;
-            int ChildCount;
-            std::vector<int> children;
+	void SetVertexBoneData(Vertex& vertex, int boneID, float weight)
+	{
+		for (int i = 0; i < MAX_BONE_INFLUENCE; ++i)
+		{
+			if (vertex.m_BoneIDs[i] < 0)
+			{
+				vertex.m_Weights[i] = weight;
+				vertex.m_BoneIDs[i] = boneID;
+				break;
+			}
+		}
+	}
 
-            infile.read(reinterpret_cast<char*>(&BoneID),sizeof(int));
-            infile.read(reinterpret_cast<char*>(&OrientR),sizeof(glm::mat4));
-            infile.read(reinterpret_cast<char*>(&ChildCount),sizeof(int));
-            for(int j = 0; j < ChildCount; j++) {
-                int ChildID;
-                infile.read(reinterpret_cast<char*>(&ChildID),sizeof(int));
-                children.push_back(ChildID);
-            };
 
-            tempNodeList.push_back((AnimNodeFile){OrientR,BoneID,ChildCount,children});
-        };
+	void ExtractBoneWeightForVertices(std::vector<Vertex>& vertices, aiMesh* mesh, const aiScene* scene)
+	{
+		auto& boneInfoMap = m_BoneInfoMap;
+		int& boneCount = m_BoneCounter;
 
-        AnimationInternal = Animation(AnimDuration, TpsCount, tempNodeList, tempBoneList);
-    };
+		for (int boneIndex = 0; boneIndex < mesh->mNumBones; ++boneIndex)
+		{
+			int boneID = -1;
+			std::string boneName = mesh->mBones[boneIndex]->mName.C_Str();
+			if (boneInfoMap.find(boneName) == boneInfoMap.end())
+			{
+				BoneInfo newBoneInfo;
+				newBoneInfo.id = boneCount;
+				newBoneInfo.offset = AssimpGLMHelpers::ConvertMatrixToGLMFormat(mesh->mBones[boneIndex]->mOffsetMatrix);
+				boneInfoMap[boneName] = newBoneInfo;
+				boneID = boneCount;
+				boneCount++;
+			}
+			else
+			{
+				boneID = boneInfoMap[boneName].id;
+			}
+			assert(boneID != -1);
+			auto weights = mesh->mBones[boneIndex]->mWeights;
+			int numWeights = mesh->mBones[boneIndex]->mNumWeights;
+
+			for (int weightIndex = 0; weightIndex < numWeights; ++weightIndex)
+			{
+				int vertexId = weights[weightIndex].mVertexId;
+				float weight = weights[weightIndex].mWeight;
+				assert(vertexId <= vertices.size());
+				SetVertexBoneData(vertices[vertexId], boneID, weight);
+			}
+		}
+	}
+
+
+	unsigned int TextureFromFile(std::string path, bool gamma = false)
+	{
+		std::string filename = std::string(path);
+
+		unsigned int textureID;
+		glGenTextures(1, &textureID);
+
+		int width, height, nrComponents;
+		unsigned char* data = stbi_load(path.c_str(), &width, &height, &nrComponents, 0);
+		if (data)
+		{
+			GLenum format;
+			if (nrComponents == 1)
+				format = GL_RED;
+			else if (nrComponents == 3)
+				format = GL_RGB;
+			else if (nrComponents == 4)
+				format = GL_RGBA;
+
+			glBindTexture(GL_TEXTURE_2D, textureID);
+			glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+			glGenerateMipmap(GL_TEXTURE_2D);
+
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+			stbi_image_free(data);
+		}
+		else
+		{
+			std::cout << "Texture failed to load at path: " << path << std::endl;
+			stbi_image_free(data);
+		}
+
+		return textureID;
+	}
+    
+    // checks all material textures of a given type and loads the textures if they're not loaded yet.
+    // the required info is returned as a Texture struct.
+   
 };
 
-unsigned int LoadTexture(const char *filename);
+
+struct AssimpNodeData
+{
+	glm::mat4 transformation;
+	std::string name;
+	int childrenCount;
+	std::vector<AssimpNodeData> children;
+};
+
+class Animation
+{
+public:
+	Animation() = default;
+
+	Animation(const std::string& animationPath, Model* model)
+	{
+		Assimp::Importer importer;
+		const aiScene* scene = importer.ReadFile(animationPath, aiProcess_Triangulate);
+		assert(scene && scene->mRootNode);
+		auto animation = scene->mAnimations[0];
+		m_Duration = animation->mDuration;
+		m_TicksPerSecond = animation->mTicksPerSecond;
+		aiMatrix4x4 globalTransformation = scene->mRootNode->mTransformation;
+		globalTransformation = globalTransformation.Inverse();
+		ReadHeirarchyData(m_RootNode, scene->mRootNode);
+		ReadMissingBones(animation, *model);
+	}
+
+	~Animation()
+	{
+	}
+
+	Bone* FindBone(const std::string& name)
+	{
+		auto iter = std::find_if(m_Bones.begin(), m_Bones.end(),
+			[&](const Bone& Bone)
+			{
+				return Bone.GetBoneName() == name;
+			}
+		);
+		if (iter == m_Bones.end()) return nullptr;
+		else return &(*iter);
+	}
+
+	
+	inline float GetTicksPerSecond() { return m_TicksPerSecond; }
+	inline float GetDuration() { return m_Duration;}
+	inline const AssimpNodeData& GetRootNode() { return m_RootNode; }
+	inline const std::map<std::string,BoneInfo>& GetBoneIDMap() 
+	{ 
+		return m_BoneInfoMap;
+	}
+
+private:
+	void ReadMissingBones(const aiAnimation* animation, Model& model)
+	{
+		int size = animation->mNumChannels;
+
+		auto& boneInfoMap = model.GetBoneInfoMap();//getting m_BoneInfoMap from Model class
+		int& boneCount = model.GetBoneCount(); //getting the m_BoneCounter from Model class
+
+		//reading channels(bones engaged in an animation and their keyframes)
+		for (int i = 0; i < size; i++)
+		{
+			auto channel = animation->mChannels[i];
+			std::string boneName = channel->mNodeName.data;
+
+			if (boneInfoMap.find(boneName) == boneInfoMap.end())
+			{
+				boneInfoMap[boneName].id = boneCount;
+				boneCount++;
+			}
+			m_Bones.push_back(Bone(channel->mNodeName.data,
+				boneInfoMap[channel->mNodeName.data].id, channel));
+		}
+
+		m_BoneInfoMap = boneInfoMap;
+	};
+
+	void ReadHeirarchyData(AssimpNodeData& dest, const aiNode* src)
+	{
+		assert(src);
+
+		dest.name = src->mName.data;
+		dest.transformation = AssimpGLMHelpers::ConvertMatrixToGLMFormat(src->mTransformation);
+		dest.childrenCount = src->mNumChildren;
+
+		for (int i = 0; i < src->mNumChildren; i++)
+		{
+			AssimpNodeData newData;
+			ReadHeirarchyData(newData, src->mChildren[i]);
+			dest.children.push_back(newData);
+		}
+	}
+	float m_Duration;
+	int m_TicksPerSecond;
+	std::vector<Bone> m_Bones;
+	AssimpNodeData m_RootNode;
+	std::map<std::string, BoneInfo> m_BoneInfoMap;
+};
+
+
+class Animator
+{
+public:
+    Animator(void) {
+        
+    };
+
+	Animator(Animation* animation)
+	{
+		m_CurrentTime = 0.0;
+		m_CurrentAnimation = animation;
+
+		m_FinalBoneMatrices.reserve(100);
+
+		for (int i = 0; i < 100; i++)
+			m_FinalBoneMatrices.push_back(glm::mat4(1.0f));
+	}
+
+	void UpdateAnimation(float dt)
+	{
+		m_DeltaTime = dt;
+		if (m_CurrentAnimation)
+		{
+			m_CurrentTime += m_CurrentAnimation->GetTicksPerSecond() * dt;
+			m_CurrentTime = fmod(m_CurrentTime, m_CurrentAnimation->GetDuration());
+			CalculateBoneTransform(&m_CurrentAnimation->GetRootNode(), glm::mat4(1.0f));
+		}
+	}
+
+	void PlayAnimation(Animation* pAnimation)
+	{
+		m_CurrentAnimation = pAnimation;
+		m_CurrentTime = 0.0f;
+	}
+
+	void CalculateBoneTransform(const AssimpNodeData* node, glm::mat4 parentTransform)
+	{
+		std::string nodeName = node->name;
+		glm::mat4 nodeTransform = node->transformation;
+
+		Bone* Bone = m_CurrentAnimation->FindBone(nodeName);
+
+		if (Bone)
+		{
+			Bone->Update(m_CurrentTime);
+			nodeTransform = Bone->GetLocalTransform();
+		}
+
+		glm::mat4 globalTransformation = parentTransform * nodeTransform;
+
+		auto boneInfoMap = m_CurrentAnimation->GetBoneIDMap();
+		if (boneInfoMap.find(nodeName) != boneInfoMap.end())
+		{
+			int index = boneInfoMap[nodeName].id;
+			glm::mat4 offset = boneInfoMap[nodeName].offset;
+			m_FinalBoneMatrices[index] = globalTransformation * offset;
+		}
+
+		for (int i = 0; i < node->childrenCount; i++)
+			CalculateBoneTransform(&node->children[i], globalTransformation);
+	}
+
+	std::vector<glm::mat4> GetFinalBoneMatrices()
+	{
+		return m_FinalBoneMatrices;
+	}
+
+private:
+	std::vector<glm::mat4> m_FinalBoneMatrices;
+	Animation* m_CurrentAnimation;
+	float m_CurrentTime;
+	float m_DeltaTime;
+
+};
+
+
 #endif

@@ -26,6 +26,7 @@ extern GLFWwindow* window;
 extern int countywounty;
 extern int inputdir;
 extern int buttontec;
+extern float deltaTime;
 
 struct JklScene {
     virtual void codeInit(void) { std::cout << "BEHAVIOUR UNDEFINED ! : BEGIN " << std::endl;};

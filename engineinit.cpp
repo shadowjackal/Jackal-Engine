@@ -6,7 +6,7 @@ int inputdir = -1;
 int buttontec;
 
 extern int LastThingDrawn;
-
+float deltaTime = 0.0f;
 
 GLFWwindow* window;
 JklScene* CurrentScene;
@@ -57,7 +57,7 @@ void jklsetScene(JklScene* nscene) {
 
 void jklrun(void) {
     int frames = 0;
-    float deltaTime = 0.0f;
+    deltaTime = 0.0f;
     float lastFrame = 0.0f;
     auto start = std::chrono::steady_clock::now();
     while (!glfwWindowShouldClose(window))
@@ -66,7 +66,7 @@ void jklrun(void) {
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
 
         ++frames;
